@@ -12,6 +12,68 @@ public enum IconRenderer {
         return image(shares: shares, pointSize: pointSize)
     }
 
+    /// Single-provider progress ring for `% Used` mode. `percentUsed` is 0...100.
+    public static func image(percentUsed: Double, provider: Provider, pointSize: CGFloat = 20) -> NSImage {
+        let clamped = min(100, max(0, percentUsed))
+        let scale: CGFloat = 2
+        let pixels = max(1, Int(pointSize * scale))
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixels,
+            pixelsHigh: pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )!
+        rep.size = NSSize(width: pointSize, height: pointSize)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+
+        let center = NSPoint(x: pointSize / 2, y: pointSize / 2)
+        let lineWidth = pointSize * 0.24
+        let radius = (pointSize - lineWidth) / 2 - 0.5
+
+        let track = NSBezierPath()
+        track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+        track.lineWidth = lineWidth
+        NSColor(white: 0.5, alpha: 0.35).setStroke()
+        track.stroke()
+
+        let sweep = CGFloat(clamped / 100) * 360
+        if sweep >= 359.9 {
+            let path = NSBezierPath()
+            path.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+            path.lineWidth = lineWidth
+            progressColor(for: provider, percentUsed: clamped).setStroke()
+            path.stroke()
+        } else if sweep > 0.5 {
+            let path = NSBezierPath()
+            path.appendArc(
+                withCenter: center,
+                radius: radius,
+                startAngle: 90,
+                endAngle: 90 - sweep,
+                clockwise: true
+            )
+            path.lineWidth = lineWidth
+            path.lineCapStyle = .butt
+            progressColor(for: provider, percentUsed: clamped).setStroke()
+            path.stroke()
+        }
+
+        NSGraphicsContext.restoreGraphicsState()
+
+        let image = NSImage(size: NSSize(width: pointSize, height: pointSize))
+        image.addRepresentation(rep)
+        image.isTemplate = false
+        return image
+    }
+
     public static func image(shares: [(Provider, Double)], pointSize: CGFloat = 20) -> NSImage {
         let scale: CGFloat = 2
         let pixels = max(1, Int(pointSize * scale))
@@ -92,5 +154,14 @@ public enum IconRenderer {
             blue: CGFloat(components.blue),
             alpha: 1
         )
+    }
+
+    /// Provider tint that turns red/orange when almost exhausted, matching the
+    /// limit bars in the panel.
+    private static func progressColor(for provider: Provider, percentUsed: Double) -> NSColor {
+        let remaining = 100 - percentUsed
+        if remaining <= 10 { return .red }
+        if remaining <= 25 { return .orange }
+        return color(for: provider)
     }
 }

@@ -3,9 +3,11 @@
 A macOS menu bar app that shows token usage from Claude, Codex, DeepSeek, and
 Muse in one ring.
 
-The ring splits by each provider's share of today's tokens. Click the icon to
-see per-provider totals, 5-hour and weekly availability, and reset times. Click
-a provider row to open its usage dashboard.
+The ring shows either each provider's share of today's tokens, or the
+selected provider's % used at its first bottleneck (higher of 5-hour vs
+weekly % used). Click the icon to see per-provider totals, 5-hour and weekly
+availability, and reset times. Click a provider row to show it in the ring in
+`% Used` mode; click the arrow to open its usage dashboard.
 
 ## Requirements
 
