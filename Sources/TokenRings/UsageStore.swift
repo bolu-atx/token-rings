@@ -9,16 +9,47 @@ final class UsageStore: ObservableObject {
     @Published private(set) var icon: NSImage
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefresh: Date?
+    @Published var ringMode: RingMode {
+        didSet {
+            UserDefaults.standard.set(ringMode.rawValue, forKey: Self.ringModeKey)
+            updateIcon()
+        }
+    }
+    @Published private(set) var selectedProvider: Provider {
+        didSet {
+            if persistSelection {
+                UserDefaults.standard.set(selectedProvider.rawValue, forKey: Self.selectedProviderKey)
+            }
+            updateIcon()
+        }
+    }
+
+    private var persistSelection = true
+
+    private static let ringModeKey = "dev.blu.tokenrings.ringMode"
+    private static let selectedProviderKey = "dev.blu.tokenrings.selectedProvider"
 
     private let log = Logger(subsystem: "dev.blu.tokenrings", category: "usage")
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var museAllowance: MuseAllowanceProbe.Result?
     private var lastMuseAttempt: Date?
+    private var hasExplicitSelection: Bool
 
     init() {
         let initial = Provider.allCases.map { ProviderReading(provider: $0) }
         readings = initial
+        let storedMode = UserDefaults.standard.string(forKey: Self.ringModeKey)
+            .flatMap(RingMode.init(rawValue:)) ?? .tokens
+        ringMode = storedMode
+        if let stored = UserDefaults.standard.string(forKey: Self.selectedProviderKey)
+            .flatMap(Provider.init(rawValue:)) {
+            selectedProvider = stored
+            hasExplicitSelection = true
+        } else {
+            selectedProvider = .claude
+            hasExplicitSelection = false
+        }
         icon = IconRenderer.image(for: initial)
         startTimer()
         refresh(forceMuse: true)
@@ -34,6 +65,21 @@ final class UsageStore: ObservableObject {
             return 0
         }
         return Double(tokens) / Double(totalToday)
+    }
+
+    /// Bottleneck (higher of 5h vs weekly % used) for a provider, if it reports
+    /// window limits.
+    func bottleneckPercent(of provider: Provider) -> Double? {
+        readings.first(where: { $0.provider == provider })?.bottleneckPercent()
+    }
+
+    func select(_ provider: Provider) {
+        hasExplicitSelection = true
+        selectedProvider = provider
+    }
+
+    func setRingMode(_ mode: RingMode) {
+        ringMode = mode
     }
 
     func refreshIfStale() {
@@ -75,12 +121,42 @@ final class UsageStore: ObservableObject {
             updated[index].limitsAsOf = museAllowance.asOf
         }
         self.readings = updated
-        icon = IconRenderer.image(for: updated)
+        if !hasExplicitSelection {
+            autoSelectBottleneckLeader()
+        }
+        updateIcon()
         lastRefresh = refreshedAt
         isRefreshing = false
 
         let total = totalToday
         log.info("Refreshed: \(total, privacy: .public) tokens today")
+    }
+
+    /// Default selection: the provider closest to its first bottleneck, so the
+    /// `% Used` ring shows the most urgent limit without manual picking.
+    private func autoSelectBottleneckLeader() {
+        let now = Date()
+        let leader = readings.max { a, b in
+            (a.bottleneckPercent(now: now) ?? -1) < (b.bottleneckPercent(now: now) ?? -1)
+        }
+        if let leader, leader.bottleneckPercent(now: now) != nil {
+            // A default, not a choice: do not persist it as an explicit pick.
+            persistSelection = false
+            selectedProvider = leader.provider
+            persistSelection = true
+        }
+    }
+
+    private func updateIcon() {
+        if ringMode == .limits,
+           let percent = readings.first(where: { $0.provider == selectedProvider })?
+            .bottleneckPercent() {
+            icon = IconRenderer.image(percentUsed: percent, provider: selectedProvider)
+        } else if ringMode == .limits {
+            icon = IconRenderer.image(percentUsed: 0, provider: selectedProvider)
+        } else {
+            icon = IconRenderer.image(for: readings)
+        }
     }
 
     private func startTimer() {
